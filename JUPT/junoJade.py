@@ -11,6 +11,7 @@ import matplotlib.ticker as ticker
 from mpl_toolkits import axes_grid1
 from math import floor
 from datetime import timedelta
+import configparser
 
 def DownloadJadeData(dataPath, downloadPath, timeFrame, hiRes=False):
     """ Downloads the JADE data using system command wget
@@ -40,8 +41,18 @@ def DownloadJadeData(dataPath, downloadPath, timeFrame, hiRes=False):
         fileName = dataPath + path.split("/")[-1]
         os.system(f"wget -r -q --show-progress -nd -np -nH -P {dataPath} -O {fileName} {path}")
 
+def _DownloadJadeData(dataDirectory, urlList):
+    from io import BytesIO
+    from urllib.request import urlopen
+    from zipfile import ZipFile
+    
+    for url in urlList:
+        with urlopen(url) as zipped_file:
+            with ZipFile(BytesIO(zipped_file.read())) as zfile:
+                zfile.extractall(dataDirectory)
 
-def LoadBinaryFiles(dataDirectory, timeFrame, downloadPath, hiRes=False):
+
+def LoadBinaryFiles(dataDirectory, timeFrame, downloadConfig, hiRes=False):
     # Inputs are a directory containing the files to be loaded and a list of the measurements to be pulled from the files.
 
     # NEED TO CHECK TO ONLY LOAD FILES WITHIN THE TIME FRAME, REUSE PATHSFROMTIMEDIFFERENCE?
@@ -55,15 +66,18 @@ def LoadBinaryFiles(dataDirectory, timeFrame, downloadPath, hiRes=False):
 
     """
 
-    print(f"Loading JADE files from {dataDirectory}")
+    res = 'hiRes' if hiRes else 'loRes'
 
+    print(f"Loading JADE files from {dataDirectory}")
+    
     for fileExtension in ["DAT", "LBL"]:
         # Check if all filepaths between data are in the folder
-        if hiRes:
-            filePathsNeeded = PathsFromTimeDifference(timeFrame[0], timeFrame[1], f"{dataDirectory}JAD_L50_HRS_ELC_TWO_DEF_%Y%j_V01.{fileExtension}")
-        else:
-            filePathsNeeded = PathsFromTimeDifference(timeFrame[0], timeFrame[1], f"{dataDirectory}JAD_L50_LRS_ELC_ANY_DEF_%Y%j_V01.{fileExtension}")
-
+        # if hiRes:
+        #     filePathsNeeded = PathsFromTimeDifference(timeFrame[0], timeFrame[1], f"{dataDirectory}{downloadConfig['format']['PDS - JADE electron hiRes']}.{fileExtension}")
+        # else:
+        #     filePathsNeeded = PathsFromTimeDifference(timeFrame[0], timeFrame[1], f"{dataDirectory}{downloadConfig['format']['PDS - JADE electron loRes']}.{fileExtension}")
+        filePathsNeeded = PathsFromTimeDifference(timeFrame[0], timeFrame[1], f"{dataDirectory}{downloadConfig['format']['PDS - JADE electron '+res]}.{fileExtension}")
+            
         filePathsNeeded.sort()
         # print(f"NEEDED: {filePathsNeeded}")
         
@@ -73,17 +87,28 @@ def LoadBinaryFiles(dataDirectory, timeFrame, downloadPath, hiRes=False):
 
         filesToBeDownloaded = [file for file in filePathsNeeded if file not in filePaths]
 
-        if hiRes:
-            fileLinks = PathsFromTimeDifference(timeFrame[0], timeFrame[1], f"%Y/%Y%j/ELECTRONS/JAD_L50_HRS_ELC_TWO_DEF_%Y%j_V01.{fileExtension}")
-        else:
-            fileLinks = PathsFromTimeDifference(timeFrame[0], timeFrame[1], f"%Y/%Y%j/ELECTRONS/JAD_L50_LRS_ELC_ANY_DEF_%Y%j_V01.{fileExtension}")
-
+        # if hiRes:
+        #     fileLinks = PathsFromTimeDifference(timeFrame[0], timeFrame[1], f"{downloadConfig['url']['PDS - JADE electron hires']}")
+        # else:
+        #     fileLinks = PathsFromTimeDifference(timeFrame[0], timeFrame[1], f"{downloadConfig['url']['PDS - JADE electron lores']}")
+        fileLinks = PathsFromTimeDifference(timeFrame[0], timeFrame[1], f"{downloadConfig['url']['PDS - JADE electron '+res]}")
+        fileLinks.sort()
+        
         if len(filesToBeDownloaded) > 0:
             print("Downloading missing data...")
+            fileLinksToUse = []
             for path in filesToBeDownloaded:
-                linkIndex = [i for i, link in enumerate(fileLinks) if path.replace(dataDirectory, '') in link][0]
-                fileName = dataDirectory + path.split("/")[-1]
-                os.system(f"wget -r -q --show-progress -nd -np -nH -P {dataDirectory} -O {fileName} {downloadPath}{fileLinks[linkIndex]}")
+                for url in fileLinks:
+                    if path.split('/')[-1] in url: fileLinksToUse.append(url)
+                        
+            _DownloadJadeData(dataDirectory, fileLinksToUse)
+            breakpoint()
+            
+            # for path in filesToBeDownloaded:
+            #     linkIndex = [i for i, link in enumerate(fileLinks) if path.replace(dataDirectory, '') in link][0]
+            #     fileName = dataDirectory + path.split("/")[-1]
+            #     breakpoint()
+            #     os.system(f"wget -r -q --show-progress -nd -np -nH -P {dataDirectory} -O {fileName} {downloadPath}{fileLinks[linkIndex]}")
         
         filePaths = filePathsNeeded
         
@@ -124,13 +149,16 @@ def DeleteData(dataDirectory):
 
 
 def PlotData(fig, ax, timeFrame, dataDirectory, colourmap="viridis", vmin=False, vmax=False, plotEphemeris=False, ephemerisLabels=False, downloadNewData=False, hiRes=True, colorbarSize="3%", colorbarPad="2%", plotElectronEnergy=True, plotPitchAngle=False, reBin=True, pitchBinStep=10, pitchAngleEnergyRange=[]):
-
+    
+    directoryConfig = configparser.ConfigParser(interpolation=configparser.ExtendedInterpolation())
+    directoryConfig.read("./directory_config.ini")
+    
     if downloadNewData:
         DeleteData(dataDirectory)
-        DownloadJadeData(dataDirectory, "https://pds-ppi.igpp.ucla.edu/ditdos/download?id=pds://PPI/JNO-J_SW-JAD-5-CALIBRATED-V1.0/DATA/", timeFrame, hiRes=hiRes)
+        DownloadJadeData(dataDirectory, directoryConfig, timeFrame, hiRes=hiRes)
 
-    filesWithInfo = LoadBinaryFiles(dataDirectory, timeFrame, "https://pds-ppi.igpp.ucla.edu/ditdos/download?id=pds://PPI/JNO-J_SW-JAD-5-CALIBRATED-V1.0/DATA/", hiRes=hiRes)
-
+    filesWithInfo = LoadBinaryFiles(dataDirectory, timeFrame, directoryConfig, hiRes=hiRes)
+    
     startTime = []
     endTime = []
     energy = []
